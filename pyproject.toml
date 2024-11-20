@@ -12,6 +12,9 @@ requires-python = ">= 3.11"
 dependencies = [
     "torch",
     "torchvision",
+    "tensorflow",
+    "keras",
+    "silence_tensorflow",
     "numpy == 1.26.4",
     "flatbuffers",
     "pandas",
