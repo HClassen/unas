@@ -19,8 +19,7 @@ dependencies = [
     "flatbuffers",
     "pandas",
     "matplotlib",
-    "pyqt6",
-    "tdqm"
+    "pyqt6"
 ]
 
 [tool.setuptools.packages.find]
