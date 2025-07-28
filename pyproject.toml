@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unas"
+version = "0.0.1"
+authors = [{ name = "Henrik Claßen", email = "henrik.classen@web.de" }]
+license = "GPL-2.0-only"
+readme = "README.md"
+requires-python = ">= 3.11"
+dependencies = [ ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["unas*"]
