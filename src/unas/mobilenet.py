@@ -1,5 +1,6 @@
 import time
 from typing import Final
+from logging import Logger
 from functools import cache
 from collections.abc import Callable, Iterable
 
@@ -209,6 +210,7 @@ def skeletonnet_train(
     momentum: float = 0.9,
     weight_decay: float = 5e-5,
     *,
+    logger: Logger,
     batches: int | None = None,
     device=None
 ) -> None:
@@ -228,6 +230,8 @@ def skeletonnet_train(
             The momenum for `SGD` to use.
         weight_decay (float):
             The weight decay for `SGD` to use.
+        logger (Logger):
+            The logger to output training status messages.
         batches (int, None):
             The number of batches per epoch. If set to `None` use the whole data
             set.
@@ -253,12 +257,11 @@ def skeletonnet_train(
 
     skeletonnet.train()
     for i in range(epochs):
-        print(make_caption(f"Epoch {i + 1}/{epochs}", 70, "-"))
+        logger.info(make_caption(f"Epoch {i + 1}/{epochs}", 70, "-"))
         epoch_start = time.time()
 
         batch_start = time.time()  # to capture data load time
         for j, (images, labels) in enumerate(dl):
-            print(f"epoch={i + 1}, batch={j + 1:0{len(str(batches))}}/{batches}", end="")
 
             images = images.to(device)
             labels = labels.to(device)
@@ -273,7 +276,9 @@ def skeletonnet_train(
 
             batch_time = time.time() - batch_start
 
-            print(f", time={batch_time:.2f}s")
+            logger.info(
+                f"epoch={i + 1}, batch={j + 1:0{len(str(batches))}}/{batches}, time={batch_time:.2f}s"
+            )
             batch_start = time.time()
 
             if batches == j + 1:
@@ -282,16 +287,17 @@ def skeletonnet_train(
             scheduler.step()
 
         epoch_time = time.time() - epoch_start
-        print(f"\ntime={epoch_time:.2f}s\n")
+        logger.info(f"time={epoch_time:.2f}s")
 
     train_time = time.time() - train_start
-    print(f"\ntotal={train_time:.2f}s")
+    logger.info(f"total={train_time:.2f}s")
 
 
 def skeletonnet_valid(
     skeletonnet: MobileSkeletonNet,
     dl: DataLoader,
     *,
+    logger: Logger,
     batches: int | None = None,
     device=None
 ) -> float:
@@ -303,6 +309,8 @@ def skeletonnet_valid(
             The network to validate.
         dl (torch.utils.data.DataLoader):
             The data loader of the data set used to validate.
+        logger (Logger):
+            The logger to output training status messages.
         batches (int, None):
             The number of batches per epoch. If set to `None` use the whole data
             set.
@@ -334,5 +342,5 @@ def skeletonnet_valid(
             if batches == i + 1:
                 break
 
-    print(f"total={time.time() - valid_start:.2f}s")
+    logger.info(f"total={time.time() - valid_start:.2f}s")
     return float(correct) / float(total)

@@ -1,5 +1,6 @@
 import time
 from copy import deepcopy
+from logging import Logger
 from itertools import islice
 from typing import cast, Final
 from bisect import insort_left
@@ -321,6 +322,7 @@ def supernet_warm_up(
     dl: DataLoader,
     epochs: int,
     *,
+    logger: Logger,
     batches: int | None = None,
     device=None
 ) -> None:
@@ -342,6 +344,8 @@ def supernet_warm_up(
             The number of training epochs.
         batch_size (int):
             The number of samples per batch.
+        logger (Logger):
+            The logger to output training status messages.
         batches (int, None):
             The number of batches per epoch. If set to `None` use the whole data
             set.
@@ -352,28 +356,35 @@ def supernet_warm_up(
 
     ctx.pre(supernet, device=device)
 
-    print(make_caption("Warm Up", 70, " "))
+    logger.info(make_caption("Warm Up", 70, " "))
     for i, max_model in enumerate(space.max_models()):
         net = build_model(
             max_model, supernet.last.out_channels
         )
 
         skeletonnet_train(
-            net, dl, epochs, 0.9, 5e-5, batches=batches, device=device
+            net,
+            dl,
+            epochs,
+            0.9,
+            5e-5,
+            logger=logger,
+            batches=batches,
+            device=device
         )
 
-        print(make_caption(f"Set Parameters({i + 1})", 70, "-"))
+        logger.info(make_caption(f"Set Parameters({i + 1})", 70, "-"))
 
         set_start = time.time()
         ctx.set(supernet, max_model, net)
         set_time = time.time() - set_start
 
-        print(f"time={set_time:.2f}s\n")
+        logger.info(f"time={set_time:.2f}s")
 
     ctx.post(supernet)
 
     warm_up_time = time.time() - warm_up_start
-    print(f"\ntotal={warm_up_time:.2f}s")
+    logger.info(f"total={warm_up_time:.2f}s")
 
 
 class TrainCtx(ABC):
@@ -403,6 +414,7 @@ def supernet_train(
     momentum: float = 0.9,
     weight_decay: float = 5e-5,
     *,
+    logger: Logger,
     ctx: TrainCtx | None = None,
     batches: int | None = None,
     track_loss: int | list[Model] | None = 0,
@@ -430,6 +442,8 @@ def supernet_train(
             The momenum for `SGD` to use.
         weight_decay (float):
             The weight decay for `SGD` to use.
+        logger (Logger):
+            The logger to output training status messages.
         ctx (TrainCtx, None):
             The train context.
         batches (int, None):
@@ -468,17 +482,16 @@ def supernet_train(
     else:
         fixed_models = track_loss
 
-    print(make_caption("Training", 70, " "))
+    logger.info(make_caption("Training", 70, " "))
     supernet.train()
     for i in range(epochs):
-        print(make_caption(f"Epoch {i + 1}/{epochs}", 70, "-"))
+        logger.info(make_caption(f"Epoch {i + 1}/{epochs}", 70, "-"))
 
         epoch_start = time.time()
 
         batch_start = time.time()  # to capture data load time
         for k, (images, labels) in enumerate(dl):
             lr = scheduler.get_last_lr()[0]
-            print(f"epoch={i + 1}, batch={k + 1:0{len(str(batches))}}/{batches}, lr={lr:.05f}", end="")
 
             images = images.to(device)
             labels = labels.to(device)
@@ -496,7 +509,9 @@ def supernet_train(
 
             batch_time = time.time() - batch_start
 
-            print(f", time={batch_time:.2f}s")
+            logger.info(
+                f"epoch={i + 1}, batch={k + 1:0{len(str(batches))}}/{batches}, lr={lr:.05f}, time={batch_time:.2f}s"
+            )
             batch_start = time.time()
 
             if batches == k + 1:
@@ -504,6 +519,7 @@ def supernet_train(
 
         scheduler.step()
 
+        logger.info("\n")
         images, labels = next(iter(dl))
         images = images.to(device)
         labels = labels.to(device)
@@ -511,17 +527,17 @@ def supernet_train(
             supernet.set(model)
             outputs = supernet(images)
             loss = criterion(outputs, labels)
-            print(f"fixed-subnet-{i + 1}-loss={loss.item()}")
+            logger.info(f"fixed-subnet-{i + 1}-loss={loss.item()}")
 
         supernet.unset()
         if ctx is not None:
             ctx.epoch(i + 1, supernet, epochs)
 
         epoch_time = time.time() - epoch_start
-        print(f"\ntime={epoch_time:.2f}s\n")
+        logger.info(f"time={epoch_time:.2f}s")
 
     train_time = time.time() - train_start
-    print(f"\ntotal={train_time:.2f}s")
+    logger.info(f"total={train_time:.2f}s")
 
 
 
@@ -682,6 +698,7 @@ def evaluate(
     valid_dl: DataLoader,
     calib_dl: DataLoader,
     *,
+    logger: Logger,
     valid_batches: int | None = None,
     calib_batches: int = 20,
     device=None
@@ -702,6 +719,8 @@ def evaluate(
             model.
         calib_dl (torch.utils.data.DataLoader):
             The data laoder of the data set used to recalibrate the
+        logger (Logger):
+            The logger to output training status messages.
             batch-normalizations of a model.
         valid_batches (int, None):
             The number of batches per epoch used during validation. If set to
@@ -735,7 +754,7 @@ def evaluate(
                 net(images)
 
         accuracy = skeletonnet_valid(
-            net, valid_dl, batches=valid_batches, device=device
+            net, valid_dl, logger=logger, batches=valid_batches, device=device
         )
         results.append(accuracy)
         supernet.unset()
@@ -775,10 +794,9 @@ def _do_evaluate(
     top: list[tuple[Model, float]],
     topk: int,
     iteration: int,
+    logger: Logger,
     device
 ) -> list[Model]:
-    print(f"iteration={iteration + 1}, method=evaluate", end="")
-
     test_start = time.time()
     accuracies = evaluate(
         supernet,
@@ -787,11 +805,14 @@ def _do_evaluate(
         calib_dl,
         valid_batches=valid_batches,
         calib_batches=calib_batches,
+        logger=logger,
         device=device
     )
     test_time = time.time() - test_start
 
-    print(f", time={test_time:.2f}s")
+    logger.info(
+        f"iteration={iteration + 1}, method=evaluate, time={test_time:.2f}s"
+    )
 
     _add_to_top(top, population, accuracies)
     return top[:topk]
@@ -806,9 +827,9 @@ def _do_crossover(
     topk: int,
     n_cross: int,
     fitness: Callable[[Model], bool],
-    iteration: int
+    iteration: int,
+    logger: Logger
 ) -> list[Model]:
-    print(f"iteration={iteration + 1}, method=crossover", end="")
     crossover_start = time.time()
 
     cross: list[Model] = []
@@ -829,7 +850,9 @@ def _do_crossover(
     cross = cross[:n_cross]
 
     crossover_time = time.time() - crossover_start
-    print(f", time={crossover_time:.2f}s")
+    logger.info(
+        f"iteration={iteration + 1}, method=crossover, time={crossover_time:.2f}s"
+    )
 
     return cross
 
@@ -841,9 +864,9 @@ def _do_mutate(
     mutation_rate: float,
     mutator: MutatorFn,
     fitness: Callable[[Model], bool],
-    iteration: int
+    iteration: int,
+    logger: Logger
 ) -> list[Model]:
-    print(f"iteration={iteration + 1}, method=mutate", end="")
     mutate_start = time.time()
 
     mut: list[Model] = []
@@ -854,7 +877,9 @@ def _do_mutate(
             mut.append(mutated)
 
     mutate_time = time.time() - mutate_start
-    print(f", time={mutate_time:.2f}s")
+    logger.info(
+        f"iteration={iteration + 1}, method=mutate, time={mutate_time:.2f}s"
+    )
 
     return mut
 
@@ -872,6 +897,7 @@ def evolution(
     mutator: MutatorFn = lambda a, b, c: c,
     fitness: Callable[[Model], bool] = lambda _: True,
     *,
+    logger: Logger,
     ctx: EvolutionCtx | None = None,
     valid_batches: int | None = None,
     calib_batches: int | None = None,
@@ -915,6 +941,8 @@ def evolution(
             Evaluate the fitness of a sampled model on some criteria. Only
             models where `fitness` returns `True` are selected for the
             population of the next generation.
+        logger (Logger):
+            The logger to output training status messages.
         ctx (EvolutionCtx, None):
             The evolution context.
         valid_batches (int, None):
@@ -935,13 +963,13 @@ def evolution(
     n_cross: Final[int] = int(population_size * next_gen_split[0])
     n_mut: Final[int] = int(population_size * next_gen_split[1])
 
-    print(make_caption("Evolution", 70, " "))
+    logger.info(make_caption("Evolution", 70, " "))
 
     population = initial_population
     top: list[tuple[Model, float]] = []
 
     for i in range(iterations):
-        print(
+        logger.info(
             make_caption(f"Iteration {i + 1}/{iterations}", 70, "-")
         )
 
@@ -957,22 +985,23 @@ def evolution(
             top,
             topk,
             i,
+            logger,
             device
         )
         if ctx is not None:
             ctx.iteration(i + 1, population, top)
 
-        cross = _do_crossover(top, topk, n_cross, fitness, i)
+        cross = _do_crossover(top, topk, n_cross, fitness, i, logger)
         mut = _do_mutate(
-            top, topk, n_mut, mutation_rate, mutator, fitness, i
+            top, topk, n_mut, mutation_rate, mutator, fitness, i, logger
         )
 
         population = cross + mut
 
         iteration_time = time.time() - iteration_start
-        print(f"\ntime={iteration_time:.2f}s\n")
+        logger.info(f"\ntime={iteration_time:.2f}s")
 
-    print(make_caption("Final Population", 70, "-"))
+    logger.info(make_caption("Final Population", 70, "-"))
 
     top = _do_evaluate(
             supernet,
@@ -984,12 +1013,13 @@ def evolution(
             top,
             topk,
             -2,
+            logger,
             device
         )
     if ctx is not None:
         ctx.iteration(-1, population, top)
 
     evo_time = time.time() - evo_start
-    print(f"\ntotal={evo_time:.2f}s")
+    logger.info(f"total={evo_time:.2f}s")
 
     return top

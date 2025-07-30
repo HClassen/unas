@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, cast, Final
 from urllib.request import urlretrieve
 from collections.abc import Callable, Sequence
+from logging import CRITICAL, getLogger, Logger
 from shutil import copyfile, rmtree, unpack_archive
 
 import torch
@@ -70,28 +71,24 @@ def _edit_csv(path: Path, edit: Callable[[str], str]) -> None:
         f.write(content)
 
 
-def _get_train(path: Path, download: Path, verbose: bool) -> None:
+def _get_train(path: Path, download: Path, logger: Logger) -> None:
     training = path / "train"
     training.mkdir()
 
-    if verbose:
-        print("downloading train data...")
+    logger.debug("downloading train data...")
     zipped = download / "train.zip"
     _download(_training_data, zipped)
 
-    if verbose:
-        print("unpacking train data...")
+    logger.debug("unpacking train data...")
     unzipped = download / "train"
     unpack_archive(zipped, unzipped)
 
-    if verbose:
-        print("merging csvs...")
+    logger.debug("merging csvs...")
     labels = training / "labels.csv"
     _merge_csvs(unzipped, labels)
     _edit_csv(labels, lambda x: x.replace(".ppm", ".png"))
 
-    if verbose:
-        print("converting images from 'ppm' to 'png'...")
+    logger.debug("converting images from 'ppm' to 'png'...")
 
     def to(path: Path, src: Path) -> Path:
         parts = src.parts
@@ -102,35 +99,30 @@ def _get_train(path: Path, download: Path, verbose: bool) -> None:
     _convert_images(unzipped, training / "images", to)
 
 
-def _get_test(path: Path, download: Path, verbose: bool) -> None:
+def _get_test(path: Path, download: Path, logger: Logger) -> None:
     test = path / "test"
     test.mkdir()
 
-    if verbose:
-        print("downloading test data...")
+    logger.debug("downloading test data...")
     zipped = download / "test.zip"
     _download(_test_data, zipped)
 
-    if verbose:
-        print("unpacking test data...")
+    logger.debug("unpacking test data...")
     unzipped = download / "test"
     unpack_archive(zipped, unzipped)
 
-    if verbose:
-        print("converting images from 'ppm' to 'png'...")
+    logger.debug("converting images from 'ppm' to 'png'...")
 
     def to(path: Path, _: Path) -> Path:
         path.mkdir(parents=True, exist_ok=True)
         return path
     _convert_images(unzipped, test / "images", to)
 
-    if verbose:
-        print("downloading test annotations...")
+    logger.debug("downloading test annotations...")
     zipped = download / "test-annotations.zip"
     _download(_test_annotations, zipped)
 
-    if verbose:
-        print("unpacking test annotations...")
+    logger.debug("unpacking test annotations...")
     unzipped = download / "test-annotations"
     unpack_archive(zipped, unzipped)
 
@@ -140,7 +132,7 @@ def _get_test(path: Path, download: Path, verbose: bool) -> None:
     _edit_csv(dst, lambda x: x.replace(".ppm", ".png"))
 
 
-def get(path: str | Path, verbose: bool = False) -> None:
+def get(path: str | Path, logger: Logger | None = None) -> None:
     """
     Downloads and extracts the German Traffic Sign Recognition Benchmark data
     set. The resulting directory structure is
@@ -159,18 +151,22 @@ def get(path: str | Path, verbose: bool = False) -> None:
     Args:
         path (str, Path):
             The path to where to store the data set.
-        verbose (bool):
-            If ``True`` print progress infromation to stdout.
+        logger (Logger, None):
+            If not `None`, print out debug messages.
     """
     if isinstance(path, str):
         path = Path(path)
     path.mkdir()
 
+    if logger is None:
+        logger = getLogger(__name__)
+        logger.setLevel(CRITICAL)
+
     tmp = tempfile.TemporaryDirectory()
     download = Path(tmp.name)
     try:
-        _get_train(path, download, verbose)
-        _get_test(path, download, verbose)
+        _get_train(path, download, logger)
+        _get_test(path, download, logger)
     except Exception as e:
         rmtree(path)
         raise e
